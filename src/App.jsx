@@ -346,6 +346,7 @@ export default function App() {
   const [searchError, setSearchError] = useState('');
   const [searchProgress, setSearchProgress] = useState('');
   const [isFallbackMode, setIsFallbackMode] = useState(false);
+  const [useFallbackForTesting, setUseFallbackForTesting] = useState(false);
 
   const handleSearch = async () => {
     setIsSearching(true);
@@ -354,44 +355,48 @@ export default function App() {
     setAiInsights('');
     setIsFallbackMode(false);
 
+    // If "Use Fallback" is checked, just load fallback data and skip API calls.
+    if (useFallbackForTesting) {
+        setSearchProgress('1/1: Loading fallback data for testing...');
+        setIsFallbackMode(true);
+        const fallbackJobs = RICH_FALLBACK_JOBS.map((job, index) => ({
+            ...job,
+            id: job.id ? String(job.id) : `fallback-job-${index}`,
+        }));
+        setJobs(fallbackJobs);
+        setSearchError('Displaying hardcoded fallback data as requested by the testing setting.');
+        await generateAIInsights(fallbackJobs, true);
+        setIsSearching(false);
+        setSearchProgress('');
+        return;
+    }
+
     let jobResults = [];
-    let isFallback = false;
 
     try {
       setSearchProgress('1/3: Generating comprehensive search query...');
-      
       const combinedPrompt = `Search for job listings in Austria for an English-speaking entry-level graduate near ${searchParams.location}.
 Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Job Types: ${searchParams.jobTypes.join(', ')}.`;
 
       setSearchProgress('2/3: Searching Google and extracting structured job data...');
-      
       jobResults = await fetchStructuredJobData(combinedPrompt);
       
       if (!Array.isArray(jobResults) || jobResults.length === 0) {
-        setSearchError('Search completed, but the model could not find or extract any structured job listings based on your criteria. Try broadening your search.');
-        // If live search returns 0, we still want to show fallback to demonstrate
-        jobResults = RICH_FALLBACK_JOBS;
-        isFallback = true;        
+        setSearchError('No Results Found. The AI could not find any job listings matching your criteria. Try broadening your search terms.');
+        jobResults = []; // Ensure results are empty
       }
       
     } catch (error) {
       console.error('Search error:', error);      
-      
-      // Check for the specific 401 error and trigger fallback
       if (error.message.includes('HTTP error! status: 401')) {
-        // This confirms the environment is not injecting the key regardless of method
-        setSearchError('Authentication Failed (401). The live API key cannot be injected. Showing **Fallback Data** to demonstrate app functionality.');
-        jobResults = RICH_FALLBACK_JOBS;
-        isFallback = true;
+        setSearchError('Authentication Failed (401). The API key is missing or invalid. Please check your .env file or environment configuration.');
       } else {
-        setSearchError(`A critical API error occurred during the search. Showing fallback data. Error: ${error.message}`);
-        jobResults = RICH_FALLBACK_JOBS;
-        isFallback = true;
+        setSearchError(`A critical API error occurred during the search. Error: ${error.message}`);
       }
+      jobResults = []; // Ensure results are empty on error
     }
 
     // Process results (either live or fallback)
-    setIsFallbackMode(isFallback);
     const finalJobs = jobResults.map((job, index) => ({
         ...job,
         // Ensure ID is always a unique string for React keys
@@ -403,8 +408,10 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
     // Reset feedback for new search results
     setFeedback({});
 
-    setSearchProgress('3/3: Generating AI insights...');
-    await generateAIInsights(finalJobs, isFallback);
+    if (finalJobs.length > 0) {
+        setSearchProgress('3/3: Generating AI insights...');
+        await generateAIInsights(finalJobs, false); // Insights are only for live data now
+    }
 
     setSearchProgress('');
     setIsSearching(false);
@@ -524,6 +531,20 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
                   rows="2"
                 />
               </div>
+
+              <div className="md:col-span-2 border-t pt-4 mt-2">
+                 <label className="flex items-center text-sm cursor-pointer font-medium text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={useFallbackForTesting}
+                        onChange={(e) => setUseFallbackForTesting(e.target.checked)}
+                        className="mr-2 h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                      />
+                      <span className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-yellow-600" /> Force Fallback Data (for testing)
+                      </span>
+                    </label>
+              </div>
             </div>
           </div>
         )}
@@ -553,10 +574,10 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
 
         {/* Error Message */}
         {searchError && (
-          <div className={`rounded-xl p-4 mb-6 flex items-start gap-3 ${isFallbackMode ? 'bg-yellow-50 border-2 border-yellow-300' : 'bg-red-50 border-2 border-red-300'}`}>
-            <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isFallbackMode ? 'text-yellow-600' : 'text-red-600'}`} />
+          <div className={`rounded-xl p-4 mb-6 flex items-start gap-3 ${useFallbackForTesting ? 'bg-yellow-50 border-2 border-yellow-300' : 'bg-red-50 border-2 border-red-300'}`}>
+            <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${useFallbackForTesting ? 'text-yellow-600' : 'text-red-600'}`} />
             <div>
-              <h3 className="font-bold text-gray-900">Search Information</h3>
+              <h3 className={`font-bold ${useFallbackForTesting ? 'text-yellow-900' : 'text-red-900'}`}>Search Information</h3>
               <p className={`text-sm ${isFallbackMode ? 'text-yellow-800' : 'text-red-700'}`}>{searchError}</p>
             </div>
           </div>
