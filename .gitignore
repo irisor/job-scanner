@@ -30,3 +30,4 @@ dist
 # IDE directories
 .idea/
 .vscode/
+.vercel

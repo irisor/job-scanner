@@ -4,60 +4,11 @@ import { Search, ThumbsUp, ThumbsDown, Settings, Briefcase, MapPin, TrendingUp, 
 // =========================================================================
 // 🔥 LIVE API IMPLEMENTATION: Using Gemini API for Search Grounding and JSON Output
 // =========================================================================
-
-// Global configuration for the Gemini API
-// The API is returning a 404 for "gemini-1.5-flash".
-// Switching to "gemini-pro", which is another common and capable model available on the v1beta endpoint.
-// The API is still returning a 404 for "gemini-1.5-pro-latest" on the v1beta endpoint.
-// Switching to "gemini-1.5-pro" as a final attempt to find a valid model name.
-const MODEL = "gemini-2.5-flash-preview-05-20";
-const BASE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const API_ENDPOINT = `${BASE_API_URL}/${MODEL}:generateContent`;
-
-// ** IMPORTANT: For local testing, replace the empty string below with your actual Gemini API Key.
-// If run in a Canvas/Gemini environment, leave it blank, and the environment will handle injection (if working).
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 /**
- * Helper function to robustly extract JSON content from text that might contain markdown wrappers.
+ * NOTE: The API key and all direct calls to the Gemini API have been moved to serverless functions
+ * in the `/api` directory. This is a critical security improvement to prevent exposing the
+ * API key on the client-side. The frontend now calls our own backend endpoints (`/api/search`, `/api/insights`).
  */
-const extractJsonFromText = (text) => {
-    // First, try to find a JSON code block.
-    const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (markdownMatch) {
-        return markdownMatch[1].trim();
-    }
-
-    // If no code block, find the first '[' and last ']' to extract the array.
-    // This is more robust against conversational text from the model.
-    const arrayMatch = text.match(/(\[[\s\S]*\])/);
-    if (arrayMatch) {
-        return arrayMatch[1].trim();
-    }
-
-    return text.trim();
-};
-
-/**
- * Defines the structured JSON schema for the job results.
- */
-const JOB_SCHEMA = {
-    type: "ARRAY",
-    items: {
-        type: "OBJECT",
-        properties: {
-            "id": { "type": "NUMBER", "description": "A unique identifier for the job." },
-            "title": { "type": "STRING", "description": "The title of the job listing." },
-            "company": { "type": "STRING", "description": "The hiring company name." },
-            "location": { "type": "STRING", "description": "The job location." },
-            "type": { "type": "STRING", "description": "Job type (e.g., Full-time, Part-time)." },
-            "description": { "type": "STRING", "description": "A very brief, one-sentence summary of the role." },
-            "url": { "type": "STRING", "description": "The URL to the original job posting." },
-            "salary": { "type": "STRING", "description": "The listed salary or 'Not specified'." },
-            "posted": { "type": "STRING", "description": "When the job was posted (e.g., '1 day ago')." }
-        },
-        required: ["id", "title", "company", "location", "type", "description", "url"]
-    }
-};
 
 /**
  * Rich, hardcoded job data for use when the live API fails due to the 401 error.
@@ -70,118 +21,27 @@ const RICH_FALLBACK_JOBS = [
 ];
 
 /**
- * Calls the Gemini API to search the web (Google Search tool) and extract structured job data.
- * Includes inline exponential backoff logic for resilience.
+ * Calls our secure serverless function to search for jobs.
  */
 const fetchStructuredJobData = async (combinedPrompt) => {
-    // By embedding the schema and adding very specific constraints directly in the prompt,
-    // we give the model a much stronger instruction to follow.
-    const systemPrompt = `You are a highly specialized job search engine for jobs in Austria.
-1. Perform a Google search to find job listings based on the user's detailed query.
-2. CRITICAL: All job listings MUST be located within Austria. Discard any results from other countries, even if the city name matches (e.g., Vienna, USA).
-3. From the valid, Austria-based search results, extract the top 15-20 unique, real job listings that are most relevant to the user's query.
-4. Return ONLY a valid JSON array of objects. Do not include any text, headers, or markdown outside the JSON block.
-4. Each object in the array MUST strictly follow this schema: ${JSON.stringify(JOB_SCHEMA.items)}
-5. If a value for a field (like 'salary' or 'posted') cannot be found, you MUST include the key and set its value to "Not specified".
-6. The 'id' MUST be a unique number for each job. You can generate it sequentially (e.g., 1, 2, 3).
-7. The 'url' MUST be a direct, absolute URL to the job posting details or application page. Do NOT use a URL to a search results page. If you cannot find a direct link for a job, do not include that job in the results.
-8. Make a best effort to find the 'posted' date (e.g., '1 day ago', '2 weeks ago', 'Posted on May 20, 2024').
-
-Example of a single job object:
-{"id": 1, "title": "Example Job", "company": "Example Corp", "location": "Vienna, Austria", "type": "Full-time", "description": "An example job summary.", "url": "https://example.com/job/123", "salary": "€50,000", "posted": "2 days ago"}`;
-
-    const payload = {
-        contents: [{ parts: [{ text: combinedPrompt }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        tools: [{ "google_search": {} }],
-    };
-
-    if (!payload.contents || payload.contents.length === 0 || !combinedPrompt) {
-        throw new Error("Payload validation failed: Missing prompt content.");
-    }
-
-    const finalUrl = API_ENDPOINT; // The API key will be sent in the header
-
-    const headers = {
-        'Content-Type': 'application/json',
-    };
-    if (API_KEY) {
-        headers['x-goog-api-key'] = API_KEY;
-    }
-
-    const options = {
+    const response = await fetch('/api/search', {
         method: 'POST',
-        headers: headers,
-        body: JSON.stringify(payload)
-    };
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ combinedPrompt }),
+    });
 
-    const maxRetries = 5;
+    const data = await response.json();
 
-    // --- DEBUG LOGGING ---
-    console.groupCollapsed("Gemini API Request Details (Job Search)");
-    console.log("Request URL:", finalUrl);
-    // Create a copy of headers for logging, excluding sensitive keys
-    const headersForLogging = { ...options.headers };
-    delete headersForLogging['x-goog-api-key'];
-    console.log("Headers:", headersForLogging);
-    console.log("Payload:", JSON.stringify(payload, null, 2));
-    console.groupEnd();
-
-    let result;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            const response = await fetch(finalUrl, options);
-
-            if (response.status === 401) {
-                // Throw specific error for the main function to catch and switch to fallback
-                throw new Error("HTTP error! status: 401 (Unauthorized)");
-            }
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            result = await response.json();
-            break; // Exit loop on success
-        } catch (error) {
-            // Re-throw 401 immediately if caught here
-            if (error.message.includes('401')) {
-                throw error;
-            }
-
-            if (attempt === maxRetries - 1) {
-                console.error("Max retries reached. Failing.", error);
-                throw error;
-            }
-            const delay = Math.pow(2, attempt) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
+    if (!response.ok) {
+        // The serverless function provides a structured error
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
     }
 
-    if (!result) {
-        throw new Error("API call failed after all retries.");
-    }
-
-    const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
-        console.error("API Error: Received API response but found no text content in candidates structure. Full result:", result);
-        throw new Error("API response was valid, but contained no content.");
-    }
-
-    console.log("Raw API Text Content Received:", rawText);
-    
-    const cleanJsonText = extractJsonFromText(rawText);
-
-    try {
-        return JSON.parse(cleanJsonText);
-    } catch (e) {
-        console.error("JSON Parsing Error:", e);
-        throw new Error(`Failed to parse structured job data: The AI returned improperly formatted data.`);
-    }
+    return data;
 };
 
 /**
- * Calls the Gemini API to analyze the search results and current parameters, or returns a simulated analysis for fallback.
+ * Calls our secure serverless function to get AI insights.
  */
 const fetchAIInsights = async (searchParams, jobResults, isFallback = false) => {
     if (isFallback) {
@@ -194,140 +54,19 @@ const fetchAIInsights = async (searchParams, jobResults, isFallback = false) => 
 ❌ Consider removing: 'fast food' (unless specifically desired), 'animal care' (if you want to focus on office/hospitality)`;
     }
     
-    // --- Live API Call Logic ---    
-    const systemPrompt = `You are an expert career counselor. Analyze the provided job search parameters and the search results. Provide a concise, actionable analysis in a friendly tone. Suggest 2-3 new keywords to include, and 1-2 keywords to remove or refine. Use the following format: '📊 AI Analysis:...\n\n💡 Tip:...\n\n🔑 Suggested keywords to add: ...\n❌ Consider removing: ...'`;
-    
-    const userQuery = `Analyze the current search parameters: ${JSON.stringify(searchParams)}. The recent search returned ${jobResults.length} jobs. Provide insights based on this context.`;    
-
-    const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-    };
-
-    if (!payload.contents || payload.contents.length === 0 || !userQuery) {
-        throw new Error("Payload validation failed: Missing user query for insights.");
-    }
-    
-    const finalUrl = API_ENDPOINT; // The API key will be sent in the header
-
-    const headers = {
-        'Content-Type': 'application/json',
-    };
-    if (API_KEY) {
-        headers['x-goog-api-key'] = API_KEY;
-    }
-
-    const options = {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(payload)
-    };
-
-    const maxRetries = 5;
-    
-    let result;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            const response = await fetch(finalUrl, options);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            result = await response.json();
-            break; // Exit loop on success
-        } catch (error) {
-            if (attempt === maxRetries - 1) {
-                console.error("Max retries reached for insights. Failing.", error);
-                throw error;
-            }
-            const delay = Math.pow(2, attempt) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-    }
-
-    return result?.candidates?.[0]?.content?.parts?.[0]?.text || 'No insights generated.';
-};
-
-/**
- * Performs a very simple API test to check for basic connectivity and authentication.
- */
-const runSimpleApiTest = async () => {
-    const testPrompt = "Hello, world!";
-    const payload = {
-        contents: [{ parts: [{ text: testPrompt }] }],
-    };
-
-    // Simplification: Pass the API key directly in the URL as a query parameter.
-    // This is a common pattern in API documentation and the most direct way to authenticate.
-    const finalUrl = `${API_ENDPOINT}?key=${API_KEY}`;
-
-    const headers = {
-        'Content-Type': 'application/json',
-    };
-    const options = {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(payload)
-    };
-
-    console.groupCollapsed("Gemini API Request Details (Simple Test)");
-    console.log("Request URL:", finalUrl);
-    console.log("Headers:", options.headers);
-    console.log("Payload:", JSON.stringify(payload, null, 2));
-    console.groupEnd();
-
-    const response = await fetch(finalUrl, options);
-
-    if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
-    }
-
-    return await response.json();
-};
-
-/**
- * A new, separate API test based on the user-provided working example.
- * This helps isolate whether the issue is with the prompt/schema or with the fundamental API connection.
- */
-const runGoldApiTest = async () => {
-    // CRITICAL: Construct the authenticated URL locally to guarantee the ?key= parameter is present.
-    const apiUrlWithKey = `${API_ENDPOINT}?key=${API_KEY}`;
-
-    const systemPrompt = "You are a friendly, concise API tester. Provide a single, short sentence summarizing the current price of gold.";
-    const userQuery = "What is the current price of gold?";
-
-    const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        // Use the Google Search tool to force a live, up-to-date interaction.
-        tools: [{ "google_search": {} }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-    };
-
-    const options = {
+    const response = await fetch('/api/insights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    };
+        body: JSON.stringify({ searchParams, jobResultsCount: jobResults.length }),
+    });
 
-    console.groupCollapsed("Gemini API Request Details (Gold Price Test)");
-    console.log("Request URL:", apiUrlWithKey);
-    console.log("Headers:", options.headers);
-    console.log("Payload:", JSON.stringify(payload, null, 2));
-    console.groupEnd();
-
-    // Simplified fetch without backoff for a direct test
-    const response = await fetch(apiUrlWithKey, options);
+    const data = await response.json();
 
     if (!response.ok) {
-        const errorBody = await response.text();
-        console.error("Gold API Test Error Body:", errorBody);
-        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
     }
 
-    const result = await response.json();
-    console.log("Gold API Test Success Response:", result);
-
-    return result.candidates?.[0]?.content?.parts?.[0]?.text || 'No text content returned from API.';
+    return data.insights;
 };
 
 export default function App() {
@@ -342,7 +81,7 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);  
   const [jobs, setJobs] = useState([]); 
   const [showSettings, setShowSettings] = useState(false);
-  const [aiInsights, setAiInsights] = useState('');
+  const [aiInsights, setAiInsights] = useState(null);
   const [searchError, setSearchError] = useState('');
   const [searchProgress, setSearchProgress] = useState('');
   const [isFallbackMode, setIsFallbackMode] = useState(false);
@@ -352,7 +91,7 @@ export default function App() {
     setIsSearching(true);
     setJobs([]);
     setSearchError('');
-    setAiInsights('');
+    setAiInsights(null);
     setIsFallbackMode(false);
 
     // If "Use Fallback" is checked, just load fallback data and skip API calls.
@@ -388,11 +127,15 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
       
     } catch (error) {
       console.error('Search error:', error);      
-      if (error.message.includes('HTTP error! status: 401')) {
-        setSearchError('Authentication Failed (401). The API key is missing or invalid. Please check your .env file or environment configuration.');
+      // Improved Error Handling: Check for the specific API key error message.
+      if (error.message.includes("GEMINI_API_KEY")) {
+        setSearchError(`Configuration Error: The GEMINI_API_KEY is missing. 
+        - If running locally with 'vercel dev', ensure your '.env.development.local' file is correct.
+        - If this is a deployed app, check your Environment Variables in your Vercel project settings.`);
       } else {
         setSearchError(`A critical API error occurred during the search. Error: ${error.message}`);
       }
+
       jobResults = []; // Ensure results are empty on error
     }
 
@@ -423,7 +166,10 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
         setAiInsights(insights);
     } catch(error) {
         console.error('Insight generation failed:', error);
-        setAiInsights('Failed to generate insights.');
+        // Set a structured error object so the UI doesn't break
+        setAiInsights({
+            analysis: `Insight generation failed: ${error.message}`
+        });
     }
   };
 
@@ -590,9 +336,26 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
               <TrendingUp className="w-6 h-6 text-purple-600" />
               AI Insights
             </h2>
-            <pre className="text-gray-700 whitespace-pre-line bg-white p-4 rounded-lg border border-gray-200 text-sm overflow-x-auto">
-              {aiInsights}
-            </pre>
+            <div className="space-y-4 text-sm">
+              {aiInsights.analysis && (
+                <p className="text-gray-800 bg-white p-3 rounded-lg border border-gray-200">
+                  <strong>Analysis:</strong> {aiInsights.analysis}
+                </p>
+              )}
+              {aiInsights.suggestions && (
+                <p className="text-gray-800 bg-white p-3 rounded-lg border border-gray-200">
+                  <strong>Suggestions:</strong> {aiInsights.suggestions}
+                </p>
+              )}
+              {aiInsights.keywordsToAdd && aiInsights.keywordsToAdd.length > 0 && (
+                <div className="bg-white p-3 rounded-lg border border-gray-200">
+                  <strong className="text-green-800">Keywords to Add:</strong>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {aiInsights.keywordsToAdd.map(kw => <span key={kw} className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">{kw}</span>)}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
