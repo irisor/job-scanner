@@ -414,25 +414,40 @@ Keywords: ${searchParams.keywords}. Exclude: ${searchParams.excludeKeywords}. Jo
 
                 <p className="text-gray-700 mb-4">{job.description}</p>
 
-                <div className="flex justify-between items-center border-t pt-4">
-                  {/* Add fallback for optional fields like salary and posted */}
+                <div className="flex flex-col sm:flex-row justify-between items-center border-t pt-4 gap-4">
                   <span className="text-sm text-gray-500">Posted: {job.posted || 'N/A'}</span>
-                  {/* The button is now disabled if the URL is missing or not a valid absolute URL */}
-                  {(() => {
-                    const isValidUrl = job.url && (job.url.startsWith('http://') || job.url.startsWith('https://'));
-                    return (
-                  <a
-                    href={job.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-semibold transition shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed"
-                    aria-disabled={!isValidUrl}
-                    onClick={(e) => !isValidUrl && e.preventDefault()}
-                  >
-                    View Job
-                  </a>
-                    );
-                  })()}
+                  <div className="flex gap-3">
+                    {(() => {
+                      const isValidCompanyUrl = job.company_url && (job.company_url.startsWith('http://') || job.company_url.startsWith('https://'));
+                      return (
+                        <a
+                          href={job.company_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-semibold transition shadow-sm ${!isValidCompanyUrl && 'opacity-50 cursor-not-allowed'}`}
+                          aria-disabled={!isValidCompanyUrl}
+                          onClick={(e) => !isValidCompanyUrl && e.preventDefault()}
+                        >
+                          Company Website
+                        </a>
+                      );
+                    })()}
+                    {(() => {
+                      const isValidJobUrl = job.url && (job.url.startsWith('http://') || job.url.startsWith('https://'));
+                      return (
+                        <a
+                          href={job.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-semibold transition shadow-md ${!isValidJobUrl && 'opacity-50 cursor-not-allowed'}`}
+                          aria-disabled={!isValidJobUrl}
+                          onClick={(e) => !isValidJobUrl && e.preventDefault()}
+                        >
+                          View Job
+                        </a>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
             ))}

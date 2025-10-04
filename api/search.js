@@ -38,38 +38,43 @@ export default async function handler(req, res) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-05-20" });
-
+    // Configure the model with the specified version, Google Search tool, and JSON output mode.
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash-preview-05-20",
+      tools: [{googleSearch: {}}]
+      // Note: responseMimeType: "application/json" is removed as it's incompatible
+      // with the `tools` parameter for this model version.
+    });
 
     // 4. Add instructions for the AI to format the output as JSON
     const fullPrompt = `${combinedPrompt}
 
 ---
+IMPORTANT: Based on a real-time search, provide a JSON array of job listings matching the criteria.
+Each object in the array must have these keys: "id", "title", "company", "location", "type", "description", "url", "company_url", "salary", "posted".
+- The 'url' MUST be the direct, deep link to the specific job posting.
+- The 'company_url' MUST be the root homepage URL for the company (e.g., https://www.google.com).
+- Both 'url' and 'company_url' are mandatory. If you cannot find a valid URL for both, omit the job listing from the results.
+- For other fields like 'salary' or 'posted', use "N/A" if the information is not available.
+Format the output as a clean JSON array of objects. Do not include any text or markdown formatting outside of the JSON array itself. Start the response with \`\`\`json and end it with \`\`\`.`;
 
-IMPORTANT: Please perform a Google search to find real, current job listings based on the criteria.
-Format the output as a clean JSON array of objects. Each object should have these keys: "id", "title", "company", "location", "type", "description", "url", "salary", "posted".
-If a field is not available, use "Not specified" or "N/A". Ensure the 'url' is a direct, absolute URL to the job posting.
-Do not include any text or markdown formatting outside of the JSON array itself. Start the response with \`\`\`json and end it with \`\`\`.`;
-
-    // 4. Make the actual call to the Gemini API from the server
+    // 5. Make the actual call to the Gemini API from the server
     const result = await model.generateContent(fullPrompt);
     const response = await result.response;
     const text = response.text();
 
-    // 5. Clean and parse the response to extract the JSON
+    // 6. Clean and parse the response to extract the JSON from the markdown block.
     const match = text.match(/```json\n([\s\S]*?)\n```/);
 
     if (!match || !match[1]) {
-      // If the AI didn't return the expected format, we can't proceed.
-      // Log the actual response for debugging.
       console.error("AI response did not contain a valid JSON block. Response:", text);
       throw new Error("The AI model's response was not in the expected JSON format.");
     }
 
     const jsonString = match[1];
+
     try {
-      // It's also a good practice to wrap JSON.parse in its own try-catch
-      // in case the AI generates malformed JSON (e.g., with a trailing comma).
+      // Parse the extracted JSON string.
       const jobs = JSON.parse(jsonString);
       res.status(200).json(jobs);
     } catch (parseError) {
